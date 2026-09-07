@@ -1,0 +1,8 @@
+# 统一换行符：Windows 克隆到服务器时保证 Dockerfile 等为 LF，避免 Docker 构建错误
+* text=auto
+Dockerfile text eol=lf
+*.sh text eol=lf
+docker-compose.yml text eol=lf
+Makefile text eol=lf
+*.go text eol=lf
+*.md text eol=lf

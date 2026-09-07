@@ -1,0 +1,11 @@
+# Docker 构建忽略文件
+research/
+tools/
+server/seatbook.db
+booking.exe
+config.json
+二维码.jpg
+fetch_debug.html
+*.log
+git/
+.gitignore

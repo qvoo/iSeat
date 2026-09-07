@@ -1,0 +1,29 @@
+# 敏感信息与本地文件
+config.json
+config.example.json
+*.db
+*.exe
+*.exe~
+*.log
+
+# 逆向研究资料与调试产物
+research/
+tools/
+fetch_debug.html
+index_page.html
+reserve_list.html
+code_page_sign.html
+room_info.json
+validate_token.txt
+captcha_code.txt
+*.jpg
+*.png
+!web/src/assets/logo.png
+
+# 前端构建产物
+web/node_modules/
+web/dist/
+
+# 系统文件
+Thumbs.db
+.DS_Store

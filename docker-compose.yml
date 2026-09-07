@@ -1,0 +1,34 @@
+# 自习室自动占座系统 - 一键部署（MySQL + Web）
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: change-me-please
+      MYSQL_DATABASE: seatbook
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  seatbook:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PORT: "5251"
+      MYSQL_DSN: "root:change-me-please@tcp(mysql:3306)/seatbook?charset=utf8mb4&parseTime=true&loc=Local"
+      TZ: Asia/Shanghai
+    ports:
+      - "5251:5251"
+
+volumes:
+  mysql_data:

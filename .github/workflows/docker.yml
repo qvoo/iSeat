@@ -39,5 +39,5 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.TAG }}
+            ghcr.io/qvoo/iseat:latest
+            ghcr.io/qvoo/iseat:${{ steps.meta.outputs.TAG }}

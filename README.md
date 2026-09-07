@@ -78,6 +78,27 @@ go build -o booking.exe .
 3. **快速预约**：展示预约过的桌子 → 一键续约今日/明日/每天
 4. **任务管理**：暂停/恢复/删除任务；当前预约取消/退座
 
+## 📦 获取 Docker 镜像
+
+### 方式 A：容器仓库直接拉取（推荐）
+```bash
+docker pull ghcr.io/qvoo/iseat:latest
+# 或指定版本
+docker pull ghcr.io/qvoo/iseat:v1.0.0
+
+# 运行
+docker run -d --name iseat -p 5251:5251 -v iseat_data:/data ghcr.io/qvoo/iseat:latest
+```
+
+### 方式 B：下载离线镜像包
+从本仓库 **Releases** 下载 `iseat.tar`，然后：
+```bash
+docker load -i iseat.tar
+docker run -d --name iseat -p 5251:5251 -v iseat_data:/data iseat:latest
+```
+
+> 提示：两种方式等价；离线 tar 适合内网/无外网环境。
+
 ## ⚙️ 配置（环境变量）
 
 | 变量 | 默认 | 说明 |

@@ -5,6 +5,9 @@ config.example.json
 *.exe
 *.exe~
 *.log
+*.key
+data/
+server/data/
 
 # 逆向研究资料与调试产物
 research/

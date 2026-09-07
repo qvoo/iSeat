@@ -29,6 +29,9 @@ services:
       TZ: Asia/Shanghai
     ports:
       - "5251:5251"
+    volumes:
+      - seat_data:/data
 
 volumes:
   mysql_data:
+  seat_data:

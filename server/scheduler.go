@@ -1,9 +1,6 @@
 package main
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"strconv"
@@ -16,16 +13,17 @@ import (
 
 // Scheduler 任务引擎：周期处理所有活动任务（抢座/签到/续约/跨天）。
 type Scheduler struct {
-	db      *gorm.DB
-	mu      sync.Mutex
-	clients map[uint]*CXClient
-	solver  *CaptchaSolver
-	cfg     *AppConfig
+	db        *gorm.DB
+	mu        sync.Mutex
+	clients   map[uint]*CXClient
+	solver    *CaptchaSolver
+	cfg       *AppConfig
+	secretKey []byte
 }
 
 // NewScheduler 创建任务引擎。
-func NewScheduler(db *gorm.DB, cfg *AppConfig) *Scheduler {
-	return &Scheduler{db: db, clients: map[uint]*CXClient{}, solver: NewCaptchaSolver(), cfg: cfg}
+func NewScheduler(db *gorm.DB, cfg *AppConfig, secretKey []byte) *Scheduler {
+	return &Scheduler{db: db, clients: map[uint]*CXClient{}, solver: NewCaptchaSolver(), cfg: cfg, secretKey: secretKey}
 }
 
 // invalidateClient 使缓存客户端失效，下次任务自动重新登录。
@@ -43,12 +41,12 @@ func (s *Scheduler) client(user *User) (*CXClient, error) {
 		return c, nil
 	}
 	c := NewCXClient(s.cfg.CXBase, s.cfg.CXLoginURL, s.cfg.CXSeatID, "", "")
-	// 解密账号密码后登录
-	pwd, err := cxAESDecrypt(user.Password)
+	// 解密存储密码（AES-256-GCM）后登录
+	pwd, err := decryptSecret(s.secretKey, user.Password)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("密码解密失败(请重新登录更新存储): %v", err)
 	}
-	if err := c.Login(user.Username, pwd); err != nil {
+	if err := c.Login(user.Username, string(pwd)); err != nil {
 		return nil, err
 	}
 	s.clients[user.ID] = c
@@ -364,33 +362,13 @@ func (s *Scheduler) setTask(t *Task, action string, ok bool) {
 func dbSave(db *gorm.DB, t *Task) {
 	if t.ID > 0 {
 		db.Model(&Task{}).Where("id = ?", t.ID).Updates(map[string]any{
-			"last_action":   t.LastAction,
-			"last_ok":       t.LastOK,
-			"reserve_id":    t.ReserveID,
+			"last_action":    t.LastAction,
+			"last_ok":        t.LastOK,
+			"reserve_id":     t.ReserveID,
 			"reserve_end_at": t.ReserveEndAt,
-			"cap_end":       t.CapEnd,
+			"cap_end":        t.CapEnd,
 		})
 	}
-}
-
-// cxAESDecrypt 解密存储的密码（AES-CBC 逆运算）。
-func cxAESDecrypt(b64 string) (string, error) {
-	key := []byte(cxAESKey)
-	ct, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		return "", err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	pt := make([]byte, len(ct))
-	cipher.NewCBCDecrypter(block, key).CryptBlocks(pt, ct)
-	pad := int(pt[len(pt)-1])
-	if pad < 1 || pad > 16 {
-		return "", fmt.Errorf("解密填充异常")
-	}
-	return string(pt[:len(pt)-pad]), nil
 }
 
 // 简化依赖的小工具

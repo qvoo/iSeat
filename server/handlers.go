@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -21,10 +22,21 @@ type Server struct {
 	db        *gorm.DB
 	cfg       *AppConfig
 	scheduler *Scheduler
+	secretKey []byte
 }
 
 func newServer(db *gorm.DB, cfg *AppConfig) *Server {
-	return &Server{db: db, cfg: cfg, scheduler: NewScheduler(db, cfg)}
+	key, _ := ensureSecretKey(secretDir(cfg))
+	s := &Server{db: db, cfg: cfg, scheduler: NewScheduler(db, cfg, key), secretKey: key}
+	return s
+}
+
+func secretDir(cfg *AppConfig) string {
+	dir := filepath.Dir(cfg.SQLitePath)
+	if dir == "" || dir == "." {
+		dir = "data"
+	}
+	return dir
 }
 
 func (s *Server) authUser(c *gin.Context) (*User, bool) {
@@ -59,8 +71,8 @@ func (s *Server) handleLogin(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
-	// 密码 AES 加密存储
-	enc, _ := cxAES(req.Password)
+	// 密码用 AES-256-GCM 加密存储（密钥来自环境变量/独立密钥文件，不写死在代码里）
+	enc, _ := encryptSecret(s.secretKey, []byte(req.Password))
 	u := User{Username: req.Username, Password: enc}
 	var existing User
 	if err := s.db.Where("username = ?", req.Username).First(&existing).Error; err == nil {

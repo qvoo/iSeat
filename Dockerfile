@@ -9,7 +9,9 @@ RUN npm run build
 # ---- Go 后端构建阶段 ----
 FROM golang:1.23-alpine AS gobuild
 WORKDIR /src/server
-ENV GOPROXY=https://goproxy.cn,direct
+# GOTOOLCHAIN=auto: 允许按 go.mod 需求自动下载匹配的 Go 工具链；国内走 goproxy.cn 加速
+ENV GOPROXY=https://goproxy.cn,direct \
+    GOTOOLCHAIN=auto
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./

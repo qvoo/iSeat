@@ -110,7 +110,7 @@
 
     <div class="footer">
       <p>免责声明：本系统仅用于本人账号的座位预约自动化操作，请在遵守所在学校座位预约规则的前提下使用；因使用本工具产生的违约、风控或其他后果由使用者自行承担。本项目为开源学习工具，代码仅供学习交流。</p>
-      <p style="margin-top:4px">开源地址：<a href="https://github.com/qvoo/iSeat" target="_blank" rel="noopener">https://github.com/qvoo/iSeat</a> · 欢迎提交 Issue 反馈问题</p>
+      <p style="margin-top:4px">开源地址：<a href="https://github.com/qvoo/iSeatcx" target="_blank" rel="noopener">https://github.com/qvoo/iSeatcx</a> · 欢迎提交 Issue 反馈问题</p>
     </div>
 
     <!-- 账号管理浮层 -->

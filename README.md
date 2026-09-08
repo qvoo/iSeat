@@ -48,7 +48,7 @@ docker-compose.yml MySQL + Web 一键部署
 
 ### 方式一：Docker Compose（推荐）
 ```bash
-git clone https://github.com/qvoo/iSeat.git && cd iSeat
+git clone https://github.com/qvoo/iSeatcx.git && cd iSeatcx
 # 编辑 docker-compose.yml 修改数据库密码
 docker compose up -d --build
 # 打开 http://localhost:5251
@@ -107,12 +107,12 @@ cd web && npm install && npm run build                       # 前端产物由 G
 
 ### 方式 A：容器仓库直接拉取（推荐）
 ```bash
-docker pull ghcr.io/qvoo/iseat:latest
+docker pull ghcr.io/qvoo/iseatcx:latest
 # 或指定版本
-docker pull ghcr.io/qvoo/iseat:v1.1.0
+docker pull ghcr.io/qvoo/iseatcx:v1.1.3
 
 # 运行
-docker run -d --name iseat -p 5251:5251 -v iseat_data:/data ghcr.io/qvoo/iseat:latest
+docker run -d --name iseat -p 5251:5251 -v iseat_data:/data ghcr.io/qvoo/iseatcx:latest
 ```
 
 ### 方式 B：下载离线镜像包
@@ -156,7 +156,7 @@ docker run -d --name iseat -p 5251:5251 -v iseat_data:/data iseat:latest
 
 ## 📮 联系我们
 
-- GitHub：[https://github.com/qvoo/iSeat](https://github.com/qvoo/iSeat)
+- GitHub：[https://github.com/qvoo/iSeatcx](https://github.com/qvoo/iSeatcx)
 - 问题反馈：欢迎在仓库提交 **Issue**
 
 ## ⚠️ 免责声明

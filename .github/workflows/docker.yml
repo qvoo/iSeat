@@ -39,8 +39,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/qvoo/iseat:latest
-            ghcr.io/qvoo/iseat:${{ steps.meta.outputs.TAG }}
+            ghcr.io/qvoo/iseatcx:latest
+            ghcr.io/qvoo/iseatcx:${{ steps.meta.outputs.TAG }}
 
       # 构建离线 tar 镜像包，用于内网/无外网环境（Releases 附件）
       # 用 docker driver 构建出本地镜像再 docker save，保证 tar 可被 docker load。
@@ -58,9 +58,9 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           body: |
-            ## iSeat ${{ github.ref_name }}
+            ## iSeatcx ${{ github.ref_name }}
 
-            - **方式 A（推荐）**：`docker pull ghcr.io/qvoo/iseat:${{ steps.meta.outputs.TAG }}`
+            - **方式 A（推荐）**：`docker pull ghcr.io/qvoo/iseatcx:${{ steps.meta.outputs.TAG }}`
             - **方式 B（离线）**：下载下方 `iseat.tar`，然后
               ```bash
               docker load -i iseat.tar

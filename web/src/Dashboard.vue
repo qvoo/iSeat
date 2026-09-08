@@ -71,6 +71,7 @@
         <div v-if="scopedTasks.length === 0" class="muted">暂无占座任务{{ scope.mode==='single' ? '（' + currentName + '）' : '' }}</div>
         <div v-for="t in scopedTasks" :key="t.id" class="list-item">
           <span class="tag blue">座位{{ t.seat_num }}</span>
+          <span v-if="t.auto_renew" class="tag orange">持续续约</span>
           <span class="grow">
             <b>{{ roomsMap[t.room_id] || t.room_name || '房间 '+t.room_id }}</b> · <span class="muted">{{ modeText(t.mode) }}</span>
             <span v-if="t.username" class="muted"> | {{ t.username }}</span><br/>
@@ -127,8 +128,15 @@
         <input class="input input-sm" v-model="newAcc.captcha_id" placeholder="captcha_id" />
       </div>
       <button class="btn btn-primary btn-sm" style="width:100%;margin-top:8px" @click="addAccount" :disabled="addingAcc">添加账号</button>
-      <div style="margin-top:10px;max-height:300px;overflow:auto">
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        <label class="batch-check" style="cursor:pointer"><input type="checkbox" :checked="allChecked" @change="toggleAll" /> 全选</label>
+        <span class="muted">已选 {{ selectedIds.size }} 个</span>
+        <span class="grow"></span>
+        <button class="btn btn-danger btn-sm" :disabled="selectedIds.size===0" @click="batchDeleteAccount">批量删除</button>
+      </div>
+      <div style="margin-top:8px;max-height:280px;overflow:auto">
         <div v-for="a in accounts" :key="a.id" class="list-item" style="padding:10px 0">
+          <input type="checkbox" :checked="selectedIds.has(a.id)" @change="toggleSelect(a.id)" class="acc-cb" />
           <span class="tag blue">{{ a.username }}</span>
           <span class="tag" :class="a.id===currentUser?'green':'gray'">{{ a.id===currentUser?'我':'批量' }}</span>
           <span class="tag gray grow" style="flex:0 0 auto;max-width:130px;overflow:hidden;text-overflow:ellipsis">{{ a.school || '默认学校' }}</span>
@@ -168,6 +176,10 @@
           <span class="pill" :class="{active: confirm.mode==='tomorrow_once'}" @click="confirm.mode='tomorrow_once'">预约明天</span>
           <span class="pill" :class="{active: confirm.mode==='both'}" @click="confirm.mode='both'">两个都选·每天自动</span>
         </div>
+        <label class="auto-renew">
+          <input type="checkbox" v-model="confirm.autoRenew" />
+          <span>抢到后持续续约（续约段到时间自动签到，任务管理可见）</span>
+        </label>
         <div class="btns">
           <button class="btn btn-ghost" @click="confirm.open=false">再想想</button>
           <button class="btn btn-primary" :disabled="confirm.submitting" @click="submitConfirm">确认预约</button>
@@ -192,6 +204,27 @@ const newAcc = reactive({ username: '', password: '', seat_id: '', dept_id_enc: 
 const addingAcc = ref(false)
 const newTaskMsg = ref('')
 const mySeatId = ref('105')
+// 批量删除账号
+const selectedIds = ref<Set<number>>(new Set())
+const allChecked = computed(() => accounts.value.length > 0 && selectedIds.value.size === accounts.value.length)
+function toggleSelect(id: number) {
+  const s = new Set(selectedIds.value)
+  if (s.has(id)) { s.delete(id) } else { s.add(id) }
+  selectedIds.value = s
+}
+function toggleAll() {
+  selectedIds.value = allChecked.value ? new Set() : new Set(accounts.value.map(a => a.id))
+}
+async function batchDeleteAccount() {
+  const selfSel = [...selectedIds.value].some(id => id === currentUser.value)
+  if (!confirm(`删除选中的 ${selectedIds.value.size} 个账号${selfSel ? '（含当前登录账号，删除后需重新登录）' : ''}及其所有任务？`)) return
+  try {
+    const res = await api<{ ok: boolean; deleted_self?: boolean }>('/accounts/batch-delete', { method: 'POST', body: JSON.stringify({ ids: [...selectedIds.value] }) })
+    if (res.deleted_self) { logout(); return }
+    selectedIds.value = new Set()
+    await refreshAll()
+  } catch (e: any) { alert(e.message) }
+}
 
 const rooms = ref<Room[]>([])
 const nearReserves = ref<(Reserve & { username?: string })[]>([])
@@ -242,7 +275,7 @@ function dayStr(offset: number): string {
 }
 
 const confirm = reactive({
-  open: false, type: '', mode: 'today_once', submitting: false, error: '', accountId: 0,
+  open: false, type: '', mode: 'today_once', submitting: false, error: '', accountId: 0, autoRenew: true,
   info: null as null | { roomId: string; seatId: string; seatNum: string; roomName: string; capEnd: string }
 })
 
@@ -261,6 +294,9 @@ async function refreshAll() {
     rooms.value = r.rooms
     accounts.value = acc.accounts
     tasks.value = t.tasks
+    // 清理已被删除账号的勾选
+    const validIds = new Set(acc.accounts.map(a => a.id))
+    selectedIds.value = new Set([...selectedIds.value].filter(id => validIds.has(id)))
     if (!scope.accountId) { currentUser.value = acc.accounts[0]?.id || 0; scope.accountId = acc.accounts[0]?.id || 0 }
     const cur = accounts.value.find(a => a.id === (scope.mode === 'single' ? scope.accountId : currentUser.value))
     if (cur && cur.seat_id) mySeatId.value = cur.seat_id
@@ -350,12 +386,12 @@ async function submitConfirm() {
       type: confirm.type, mode: confirm.mode,
       room_id: confirm.info!.roomId, seat_id: seatId, seat_num: confirm.info!.seatNum,
       room_name: confirm.info!.roomName, start_time: '08:00', duration_minutes: 240,
-      recur_daily: confirm.mode === 'both'
+      recur_daily: confirm.mode === 'both', auto_renew: confirm.autoRenew
     }
     if (all) {
       const res = await api<{ created: Task[] }>('/batch-task', {
         method: 'POST',
-        body: JSON.stringify({ room_id: base.room_id, seat_id: base.seat_id, mode: base.mode, start_time: base.start_time, room_name: base.room_name, seats: [base.seat_num], account_ids: [] })
+        body: JSON.stringify({ room_id: base.room_id, seat_id: base.seat_id, mode: base.mode, start_time: base.start_time, room_name: base.room_name, seats: [base.seat_num], account_ids: [], auto_renew: base.auto_renew })
       })
       newTaskMsg.value = `已为 ${res.created.length} 个账号创建任务`
     } else {
@@ -387,8 +423,12 @@ async function addAccount() {
 }
 
 async function delAccount(id: number) {
-  if (!confirm('删除该账号及其所有任务？')) return
-  try { await api(`/accounts/${id}`, { method: 'DELETE' }) } catch (e: any) { alert(e.message) }
+  const isSelf = id === currentUser.value
+  if (!confirm(`删除该账号${isSelf ? '（当前登录账号）' : ''}及其所有任务？删除后需重新登录。`)) return
+  try {
+    const res = await api<{ ok: boolean; deleted_self?: boolean }>(`/accounts/${id}`, { method: 'DELETE' })
+    if (res.deleted_self) { logout(); return }
+  } catch (e: any) { alert(e.message) }
   if (scope.accountId === id) scope.accountId = accounts.value.find(a => a.id !== id)?.id || 0
   await refreshAll()
 }

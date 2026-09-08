@@ -27,6 +27,11 @@ captcha_code.txt
 web/node_modules/
 web/dist/
 
+# 本地测试/日志产物
+*.tar
+run.log
+run.err
+
 # 系统文件
 Thumbs.db
 .DS_Store

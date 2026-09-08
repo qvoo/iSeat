@@ -14,6 +14,7 @@ func main() {
 		log.Fatalf("数据库初始化失败: %v", err)
 	}
 	backfillSchools(db, cfg) // 为老账号补默认学校参数
+	backfillAutoRenew(db)    // 为老任务补默认持续续约
 	log.Printf("数据库就绪 (db=%s)", dbName(cfg))
 	srv := newServer(db, cfg)
 	go srv.scheduler.Run()
@@ -49,6 +50,15 @@ func backfillSchools(db *gorm.DB, cfg *AppConfig) {
 	}
 	if changed {
 		log.Println("[迁移] 已为老账号回填默认学校参数")
+	}
+}
+
+// backfillAutoRenew 为尚未标记持续续约的老任务补默认开启（抢到座位后持续续约+签到）。
+func backfillAutoRenew(db *gorm.DB) {
+	// 一次性任务(seat/quick)未显式关闭 auto_renew 的，默认开启持续续约
+	res := db.Model(&Task{}).Where("auto_renew = ?", false).Updates(map[string]any{"auto_renew": true})
+	if res.Error == nil && res.RowsAffected > 0 {
+		log.Printf("[迁移] 已为 %d 个老任务补默认持续续约", res.RowsAffected)
 	}
 }
 

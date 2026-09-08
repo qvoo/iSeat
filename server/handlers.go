@@ -153,6 +153,7 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 		StartTime       string `json:"start_time"`
 		DurationMinutes int    `json:"duration_minutes"`
 		RecurDaily      bool   `json:"recur_daily"`
+		AutoRenew       *bool  `json:"auto_renew"` // 抢座后持续续约（默认开）
 		QRImage         string `json:"qr_image"`
 		AccountID       uint   `json:"account_id"` // 单账号作用域
 	}
@@ -200,6 +201,11 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 			req.Mode = "today_once"
 		}
 	}
+	// 持续续约：seat/quick 默认开启；用户在确认弹窗可关闭
+	autoRenew := true
+	if req.AutoRenew != nil {
+		autoRenew = *req.AutoRenew
+	}
 	task := Task{
 		UserID:          targetUser.ID,
 		Type:            req.Type,
@@ -212,6 +218,7 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 		DurationMinutes: req.DurationMinutes,
 		CapEnd:          capEnd,
 		RecurDaily:      req.RecurDaily,
+		AutoRenew:       autoRenew,
 		Status:          "active",
 		LastAction:      "任务已创建，等待调度",
 	}
@@ -448,6 +455,7 @@ func (s *Server) setupRouter() *gin.Engine {
 		api.POST("/reserve-action", s.handleReserveAction)
 		api.GET("/accounts", s.handleAccounts)
 		api.POST("/accounts", s.handleAddAccount)
+		api.POST("/accounts/batch-delete", s.handleBatchDeleteAccounts)
 		api.PUT("/accounts/:id/school", s.handleAccountSchool)
 		api.DELETE("/accounts/:id", s.handleDeleteAccount)
 		api.POST("/batch-task", s.handleBatchTask)
@@ -586,6 +594,7 @@ func (s *Server) handleAccountSchool(c *gin.Context) {
 }
 
 // DELETE /api/accounts/:id  删除账号及其任务。
+// 允许删除任意账号（含当前登录账号）；删除后该账号的会话令牌一并失效。
 func (s *Server) handleDeleteAccount(c *gin.Context) {
 	user, ok := s.authUser(c)
 	if !ok {
@@ -593,14 +602,46 @@ func (s *Server) handleDeleteAccount(c *gin.Context) {
 		return
 	}
 	id, _ := strconv.Atoi(c.Param("id"))
-	if uint(id) == user.ID {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "不能删除当前登录账号"})
+	if id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效账号"})
 		return
 	}
 	s.db.Where("user_id = ?", id).Delete(&Task{})
+	s.db.Where("user_id = ?", id).Delete(&SessionToken{})
 	s.db.Delete(&User{}, id)
 	s.scheduler.invalidateClient(uint(id))
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "deleted_self": uint(id) == user.ID})
+}
+
+// POST /api/accounts/batch-delete  批量删除账号 {ids:[...]}。
+// 与单个删除一致：级联清理任务+会话，失效客户端；若含当前登录账号则标记 deleted_self。
+func (s *Server) handleBatchDeleteAccounts(c *gin.Context) {
+	user, ok := s.authUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+	var req struct {
+		IDs []uint `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要删除的账号"})
+		return
+	}
+	deletedSelf := false
+	for _, id := range req.IDs {
+		if id == 0 {
+			continue
+		}
+		s.db.Where("user_id = ?", id).Delete(&Task{})
+		s.db.Where("user_id = ?", id).Delete(&SessionToken{})
+		s.db.Delete(&User{}, id)
+		s.scheduler.invalidateClient(id)
+		if id == user.ID {
+			deletedSelf = true
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "deleted_self": deletedSelf, "deleted": len(req.IDs)})
 }
 
 // POST /api/batch-task  批量占座：为多个账号创建任务。
@@ -619,6 +660,7 @@ func (s *Server) handleBatchTask(c *gin.Context) {
 		RoomName   string   `json:"room_name"`
 		Seats      []string `json:"seats"`
 		AccountIDs []uint   `json:"account_ids"`
+		AutoRenew  *bool    `json:"auto_renew"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.RoomID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
@@ -690,12 +732,17 @@ func (s *Server) handleBatchTask(c *gin.Context) {
 	if capEnd == "" {
 		capEnd = "22:00"
 	}
+	autoRenew := true
+	if req.AutoRenew != nil {
+		autoRenew = *req.AutoRenew
+	}
 	var created []Task
 	for i, acc := range accounts {
 		t := Task{
 			UserID: acc.ID, Type: "seat", Mode: req.Mode,
 			RoomID: req.RoomID, SeatID: req.SeatID, SeatNum: padSeat(seats[i]),
 			RoomName: req.RoomName, StartTime: req.StartTime, DurationMinutes: 240, CapEnd: capEnd,
+			AutoRenew: autoRenew,
 			Status: "active", LastAction: "批量任务已创建，等待调度",
 		}
 		s.db.Create(&t)

@@ -46,6 +46,7 @@ type Task struct {
 	DurationMinutes   int       `json:"duration_minutes"`         // 单段时长
 	CapEnd            string    `gorm:"size:8" json:"cap_end"`    // 该房间闭馆时间(自动遍历)
 	RecurDaily        bool      `json:"recur_daily"`              // 每日重复(占座到闭馆循环)
+	AutoRenew         bool      `json:"auto_renew"`               // 抢到座位后持续续约+签到(默认开启)
 	Status            string    `gorm:"size:16;index" json:"status"` // active|paused|done|error
 	LastAction        string    `gorm:"type:text" json:"last_action"`
 	LastOK            bool      `json:"last_ok"`

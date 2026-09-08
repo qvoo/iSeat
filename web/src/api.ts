@@ -23,6 +23,7 @@ export interface Task {
   duration_minutes: number
   cap_end: string
   recur_daily: boolean
+  auto_renew: boolean
   status: string
   last_action: string
   last_ok: boolean

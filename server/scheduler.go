@@ -140,14 +140,20 @@ func (s *Scheduler) capEndFor(c *CXClient, t *Task, day time.Time) string {
 }
 
 // doOneShot 一次性预约（today_once / tomorrow_once）。
+// 若任务开启 auto_renew：首段预约成功后转成持续续约（both），之后每天自动续约+签到。
 func (s *Scheduler) doOneShot(c *CXClient, t *Task, dayOffset int, startTime string, dur time.Duration) {
 	target := time.Now().AddDate(0, 0, dayOffset)
 	day := target.Format("2006-01-02")
 	cur, near, _ := c.MyReserves(t.SeatID)
 	all := append(cur, near...)
-	myRes := filterTaskReservesOnDay(all, t, target) // 目标日、有效状态
+	myRes := filterTaskReserves(all, t) // 该任务座位（含各状态，供续约/签到判断）
+
+	// 已有预约：若开启续约则转持续并交给 doDaily（含续约+签到），否则仅签到
 	if len(myRes) > 0 {
-		// 已有预约：处理签到
+		if t.AutoRenew {
+			s.promoteToDaily(t)
+			return
+		}
 		s.handleSign(c, t, myRes)
 		return
 	}
@@ -170,6 +176,20 @@ func (s *Scheduler) doOneShot(c *CXClient, t *Task, dayOffset int, startTime str
 		return
 	}
 	s.setTask(t, fmt.Sprintf("已预约 %s %s~%s", day, segStart.Format("15:04"), segEnd.Format("15:04")), true)
+	// 首段预约成功，若开启自动续约则转为持续模式
+	if t.AutoRenew {
+		s.promoteToDaily(t)
+	}
+}
+
+// promoteToDaily 把一次性任务转为持续续约（both），使后续轮询走 doDaily 续约+签到。
+func (s *Scheduler) promoteToDaily(t *Task) {
+	if t.Mode == "both" || t.Mode == "qr" {
+		return
+	}
+	t.Mode = "both"
+	t.RecurDaily = true
+	dbSave(s.db, t)
 }
 
 // doDaily 每日循环占座（both / qr：今天到闭馆、明天到闭馆、天天循环）。
@@ -397,6 +417,8 @@ func dbSave(db *gorm.DB, t *Task) {
 			"reserve_id":     t.ReserveID,
 			"reserve_end_at": t.ReserveEndAt,
 			"cap_end":        t.CapEnd,
+			"mode":           t.Mode,
+			"auto_renew":     t.AutoRenew,
 		})
 	}
 }

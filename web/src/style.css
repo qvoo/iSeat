@@ -37,6 +37,11 @@ body {
 .input-sm { width: 100%; border: 1.5px solid #e4e9f2; border-radius: 10px; padding: 7px 10px; font-size: 12px; background: #fbfcfe; outline: none; min-width: 130px; flex: 1; }
 .input-sm:focus { border-color: #3b7cff; background: #fff; }
 .school-edit { padding: 8px 10px; background: #f7faff; border: 1px solid #e4e9f2; border-radius: 12px; }
+.auto-renew { display: flex; gap: 8px; align-items: center; margin: 12px 0 4px; font-size: 13px; color: #5a6478; cursor: pointer; }
+.auto-renew input { width: 16px; height: 16px; accent-color: #3b7cff; }
+.acc-cb { width: 16px; height: 16px; accent-color: #3b7cff; flex: 0 0 auto; }
+.batch-check { display: flex; gap: 6px; align-items: center; font-size: 13px; color: #5a6478; }
+.batch-check input { width: 16px; height: 16px; accent-color: #3b7cff; }
 .label { font-size: 13px; color: #7c8698; margin: 12px 0 6px; display: block; }
 
 /* 胶囊 */

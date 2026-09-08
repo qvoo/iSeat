@@ -28,7 +28,7 @@ const (
 	cxBase         = "https://captcha.chaoxing.com"
 	cxCallback     = "cx_captcha_function"
 	cxMaxSlideX    = 264
-	cxOffsetsInit  = "0,-6,6,-11,11,-16,16"
+	cxOffsetsInit  = "0,-4,4,-8,8,-12,12,-16,16,-20,20"
 )
 
 var cxJSONPRe = regexp.MustCompile(`^[^(]*\((.*)\)\s*;?\s*$`)
@@ -61,8 +61,8 @@ func (s *CaptchaSolver) get(u string, referer string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func (s *CaptchaSolver) jsonp(u string) (map[string]any, error) {
-	b, err := s.get(u, "")
+func (s *CaptchaSolver) jsonp(u, referer string) (map[string]any, error) {
+	b, err := s.get(u, referer)
 	if err != nil {
 		return nil, err
 	}
@@ -110,12 +110,16 @@ func (s *CaptchaSolver) Solve(referer string, maxAttempt int) (string, error) {
 		if token != "" {
 			return token, nil
 		}
+		// 避免过快请求触发验证码风控
+		if i < maxAttempt-1 {
+			time.Sleep(1500 * time.Millisecond)
+		}
 	}
 	return "", fmt.Errorf("滑块验证失败(%d次)", maxAttempt)
 }
 
 func (s *CaptchaSolver) solveOnce(referer string, offset int) (string, error) {
-	conf, err := s.jsonp(fmt.Sprintf("%s/captcha/get/conf?captchaId=%s&callback=%s", cxBase, cxCaptchaID, cxCallback))
+	conf, err := s.jsonp(fmt.Sprintf("%s/captcha/get/conf?captchaId=%s&callback=%s", cxBase, cxCaptchaID, cxCallback), referer)
 	if err != nil {
 		return "", err
 	}
@@ -127,7 +131,7 @@ func (s *CaptchaSolver) solveOnce(referer string, offset int) (string, error) {
 	imgURL := fmt.Sprintf("%s/captcha/get/verification/image?captchaId=%s&type=%s&version=%s&captchaKey=%s&token=%s&referer=%s&iv=%s&callback=%s",
 		cxBase, cxCaptchaID, cxType, cxVersion, captchaKey,
 		url.QueryEscape(token), url.QueryEscape(referer), iv, cxCallback)
-	imgResp, err := s.jsonp(imgURL)
+	imgResp, err := s.jsonp(imgURL, referer)
 	if err != nil {
 		return "", err
 	}
@@ -162,7 +166,7 @@ func (s *CaptchaSolver) solveOnce(referer string, offset int) (string, error) {
 		cxBase, cxCaptchaID, cxType, imgToken,
 		url.QueryEscape(clickArr), url.QueryEscape("[]"),
 		cxRunEnv, cxVersion, iv, cxCallback)
-	ck, err := s.jsonp(checkURL)
+	ck, err := s.jsonp(checkURL, referer)
 	if err != nil {
 		return "", err
 	}

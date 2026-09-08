@@ -151,10 +151,11 @@ func (s *Scheduler) doOneShot(c *CXClient, t *Task, dayOffset int, startTime str
 		return
 	}
 
-	// 窗口检查：目标日 19:00 前1天开放
-	openAt := target.AddDate(0, 0, -1).Add(19 * time.Hour)
+	// 预约窗口：目标日前一天 19:00 开启（预留时长固定 19:00）
+	prev := target.AddDate(0, 0, -1)
+	openAt := time.Date(prev.Year(), prev.Month(), prev.Day(), 19, 0, 0, 0, prev.Location())
 	if time.Now().Before(openAt) {
-		s.setTask(t, fmt.Sprintf("等待预约窗口开启(%s 19:00)", openAt.Format("2006-01-02 15:04")), true)
+		s.setTask(t, fmt.Sprintf("等待预约窗口开启(%s)", openAt.Format("2006-01-02 15:04")), true)
 		return
 	}
 	capEnd := s.capEndFor(c, t, target)
@@ -240,7 +241,8 @@ func (s *Scheduler) doDaily(c *CXClient, t *Task, startTime string, dur, renewAh
 	// 今日已到闭馆 -> 预约明日第一段
 	tomorrow := time.Now().AddDate(0, 0, 1)
 	day := tomorrow.Format("2006-01-02")
-	openAt := tomorrow.AddDate(0, 0, -1).Add(19 * time.Hour)
+	prev := tomorrow.AddDate(0, 0, -1)
+	openAt := time.Date(prev.Year(), prev.Month(), prev.Day(), 19, 0, 0, 0, prev.Location())
 	if time.Now().Before(openAt) {
 		s.setTask(t, "今日占座至闭馆，等待明日窗口(19:00)", true)
 		return
@@ -295,7 +297,7 @@ func (s *Scheduler) book(c *CXClient, t *Task, day string, segStart, segEnd time
 	}
 	referer := fmt.Sprintf("%s/front/apps/seatengine/code?id=%s&seatNum=%s&seatId=%s",
 		s.cfg.CXBase, t.RoomID, t.SeatNum, t.SeatID)
-	token, err := s.solver.Solve(referer, 7)
+	token, err := s.solver.Solve(referer, 11)
 	if err != nil {
 		return err
 	}

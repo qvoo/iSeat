@@ -57,6 +57,17 @@ export interface QrCode {
   updated_at: string
 }
 
+export interface Account {
+  id: number
+  username: string
+  seat_id?: string
+  dept_id_enc?: string
+  seat_id_enc?: string
+  captcha_id?: string
+  school?: string
+  created_at?: string
+}
+
 const TOKEN_KEY = 'seatbook_token'
 
 export function getToken(): string {

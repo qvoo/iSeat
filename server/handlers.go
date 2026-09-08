@@ -74,10 +74,16 @@ func (s *Server) handleLogin(c *gin.Context) {
 	// 密码用 AES-256-GCM 加密存储（密钥来自环境变量/独立密钥文件，不写死在代码里）
 	enc, _ := encryptSecret(s.secretKey, []byte(req.Password))
 	u := User{Username: req.Username, Password: enc}
+	u.fillSchool(s.cfg) // 默认学校
 	var existing User
 	if err := s.db.Where("username = ?", req.Username).First(&existing).Error; err == nil {
 		u = existing
+		u.fillSchool(s.cfg)
 		s.db.Model(&u).Update("password", enc)
+		s.db.Model(&u).Updates(map[string]any{
+			"seat_id": u.SeatID, "dept_id_enc": u.DeptIDEnc,
+			"seat_id_enc": u.SeatIDEnc, "captcha_id": u.CaptchaID,
+		})
 	} else {
 		s.db.Create(&u)
 	}
@@ -86,7 +92,7 @@ func (s *Server) handleLogin(c *gin.Context) {
 	token := hex.EncodeToString(tokenBytes)
 	s.db.Create(&SessionToken{Token: token, UserID: u.ID, ExpiresAt: time.Now().Add(30 * 24 * time.Hour)})
 	uid := ""
-	if _, _, e := probe.MyReserves(s.cfg.CXSeatID); e == nil {
+	if _, _, e := probe.MyReserves(u.SeatID); e == nil {
 		uid = ""
 	}
 	s.db.Model(&u).Update("uid", uid)
@@ -100,7 +106,18 @@ func (s *Server) handleRooms(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
 		return
 	}
-	cx, err := s.scheduler.client(user)
+	target := *user
+	if aid, _ := strconv.Atoi(c.Query("account_id")); aid > 0 {
+		var tgt User
+		if err := s.db.First(&tgt, aid).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+			return
+		}
+		tgt.fillSchool(s.cfg)
+		target = tgt
+	}
+	target.fillSchool(s.cfg)
+	cx, err := s.scheduler.client(&target)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "登录超星失败: " + err.Error()})
 		return
@@ -109,12 +126,12 @@ func (s *Server) handleRooms(c *gin.Context) {
 	if day == "" {
 		day = time.Now().Format("2006-01-02")
 	}
-	rooms, err := cx.RoomList(s.cfg.CXSeatID, day)
+	rooms, err := cx.RoomList(target.SeatID, day)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"rooms": rooms, "day": day})
+	c.JSON(http.StatusOK, gin.H{"rooms": rooms, "day": day, "school": gin.H{"seat_id": target.SeatID, "dept_id_enc": target.DeptIDEnc, "captcha_id": target.CaptchaID}})
 }
 
 // POST /api/tasks  创建占座任务
@@ -137,13 +154,11 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 		DurationMinutes int    `json:"duration_minutes"`
 		RecurDaily      bool   `json:"recur_daily"`
 		QRImage         string `json:"qr_image"`
+		AccountID       uint   `json:"account_id"` // 单账号作用域
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
-	}
-	if req.SeatID == "" {
-		req.SeatID = s.cfg.CXSeatID
 	}
 	if req.StartTime == "" {
 		req.StartTime = "08:00"
@@ -151,25 +166,26 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 	if req.DurationMinutes <= 0 {
 		req.DurationMinutes = 240
 	}
-	if req.Type == "qr" && req.QRImage != "" {
-		info, err := decodeQRBase64(req.QRImage)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		req.RoomID = info.RoomID
-		req.SeatNum = info.SeatNum
-		req.SeatID = info.SeatID
-		if req.Mode == "" {
-			req.Mode = "qr"
-		}
-	}
 	if req.RoomID == "" || req.SeatNum == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少座位信息"})
 		return
 	}
-	// 遍历该房间闭馆时间
-	cx, err := s.scheduler.client(user)
+	// 账号作用域：默认当前登录账号，可按 account_id 指定其他账号
+	targetUser := *user
+	if req.AccountID > 0 {
+		var tgt User
+		if err := s.db.First(&tgt, req.AccountID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+			return
+		}
+		targetUser = tgt
+	}
+	targetUser.fillSchool(s.cfg)
+	if req.SeatID == "" {
+		req.SeatID = targetUser.SeatID
+	}
+	// 遍历该房间闭馆时间（使用该账号学校客户端）
+	cx, err := s.scheduler.client(&targetUser)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "超星登录失败: " + err.Error()})
 		return
@@ -178,10 +194,6 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 	if capEnd == "" {
 		capEnd = "22:00"
 	}
-	// 二维码上传 -> 存入共享二维码库（去重）
-	if req.Type == "qr" && req.RoomID != "" && req.SeatNum != "" && req.QRImage != "" {
-		s.saveQrToLibrary(user.ID, req.RoomID, req.SeatID, req.SeatNum, req.RoomName, capEnd, true)
-	}
 	// 默认模式补充
 	if req.Type == "seat" || req.Type == "quick" {
 		if req.Mode == "" {
@@ -189,7 +201,7 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 		}
 	}
 	task := Task{
-		UserID:          user.ID,
+		UserID:          targetUser.ID,
 		Type:            req.Type,
 		Mode:            req.Mode,
 		RoomID:          req.RoomID,
@@ -207,28 +219,36 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"task": task})
 }
 
-// GET /api/tasks
+// GET /api/tasks  列出所有账号的任务（批量/多账号系统，展示账号名）。
 func (s *Server) handleTasks(c *gin.Context) {
-	user, ok := s.authUser(c)
-	if !ok {
+	if _, ok := s.authUser(c); !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
 		return
 	}
 	var tasks []Task
-	s.db.Where("user_id = ?", user.ID).Order("id desc").Find(&tasks)
+	s.db.Order("id desc").Find(&tasks)
+	// 联表账号名
+	var users []User
+	s.db.Find(&users)
+	uname := map[uint]string{}
+	for _, u := range users {
+		uname[u.ID] = u.Username
+	}
+	for i := range tasks {
+		tasks[i].Username = uname[tasks[i].UserID]
+	}
 	c.JSON(http.StatusOK, gin.H{"tasks": tasks})
 }
 
 // POST /api/tasks/:id/action  {action: "pause"|"resume"|"remove"}
 func (s *Server) handleTaskAction(c *gin.Context) {
-	user, ok := s.authUser(c)
-	if !ok {
+	if _, ok := s.authUser(c); !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
 		return
 	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	var task Task
-	if err := s.db.Where("id = ? AND user_id = ?", id, user.ID).First(&task).Error; err != nil {
+	if err := s.db.First(&task, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
 		return
 	}
@@ -259,12 +279,23 @@ func (s *Server) handleMyReserves(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
 		return
 	}
-	cx, err := s.scheduler.client(user)
+	// 账号作用域：?account_id= 指定其他账号
+	target := *user
+	if aid, _ := strconv.Atoi(c.Query("account_id")); aid > 0 {
+		var tgt User
+		if err := s.db.First(&tgt, aid).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+			return
+		}
+		target = tgt
+	}
+	target.fillSchool(s.cfg)
+	cx, err := s.scheduler.client(&target)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "超星登录失败: " + err.Error()})
 		return
 	}
-	cur, near, err := cx.MyReserves(s.cfg.CXSeatID)
+	cur, near, err := cx.MyReserves(target.SeatID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -272,7 +303,8 @@ func (s *Server) handleMyReserves(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"cur": cur, "near": near})
 }
 
-// POST /api/reserve-action {action:"cancel"|"signback", reserve_id}
+// POST /api/reserve-action {action:"cancel"|"signback", reserve_id, account_id?}
+// account_id 用于对"其他账号"的预约操作（取消/退座）；缺省用当前登录账号。
 func (s *Server) handleReserveAction(c *gin.Context) {
 	user, ok := s.authUser(c)
 	if !ok {
@@ -282,12 +314,24 @@ func (s *Server) handleReserveAction(c *gin.Context) {
 	var req struct {
 		Action    string `json:"action"`
 		ReserveID int64  `json:"reserve_id"`
+		AccountID uint   `json:"account_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.ReserveID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	cx, err := s.scheduler.client(user)
+	target := *user
+	if req.AccountID > 0 {
+		var tgt User
+		if err := s.db.First(&tgt, req.AccountID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+			return
+		}
+		tgt.fillSchool(s.cfg)
+		target = tgt
+	}
+	target.fillSchool(s.cfg)
+	cx, err := s.scheduler.client(&target)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "超星登录失败: " + err.Error()})
 		return
@@ -313,46 +357,6 @@ func (s *Server) handleReserveAction(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": false, "msg": resp})
 }
 
-// decodeQRBase64 base64 图片解码二维码。
-func decodeQRBase64(b64 string) (*QRInfo, error) {
-	if strings.Contains(b64, "base64,") {
-		b64 = b64[strings.Index(b64, "base64,")+7:]
-	}
-	data, err := base64Decode(b64)
-	if err != nil {
-		return nil, fmt.Errorf("图片数据无效")
-	}
-	return DecodeQR(data)
-}
-
-// saveQrToLibrary 保存/更新共享二维码库。
-func (s *Server) saveQrToLibrary(userID uint, roomID, seatID, seatNum, roomName, capEnd string, bump bool) {
-	var q QrCode
-	if err := s.db.Where("room_id = ? AND seat_num = ?", roomID, seatNum).First(&q).Error; err != nil {
-		q = QrCode{RoomID: roomID, SeatID: seatID, SeatNum: seatNum, SourceUser: userID, UploadCount: 1}
-	} else if bump {
-		q.UploadCount++
-	}
-	if q.RoomName == "" {
-		q.RoomName = roomName
-	}
-	if capEnd != "" {
-		q.CapEnd = capEnd
-	}
-	s.db.Save(&q)
-}
-
-// GET /api/qr-codes  共享二维码库。
-func (s *Server) handleQrCodes(c *gin.Context) {
-	if _, ok := s.authUser(c); !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
-		return
-	}
-	var list []QrCode
-	s.db.Order("updated_at desc").Find(&list)
-	c.JSON(http.StatusOK, gin.H{"qr_codes": list})
-}
-
 // GET /api/rooms/:id/seats  房间座位网格（亮=可选）。
 func (s *Server) handleRoomSeats(c *gin.Context) {
 	user, ok := s.authUser(c)
@@ -361,16 +365,27 @@ func (s *Server) handleRoomSeats(c *gin.Context) {
 		return
 	}
 	roomID := c.Param("id")
+	target := *user
+	if aid, _ := strconv.Atoi(c.Query("account_id")); aid > 0 {
+		var tgt User
+		if err := s.db.First(&tgt, aid).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+			return
+		}
+		tgt.fillSchool(s.cfg)
+		target = tgt
+	}
+	target.fillSchool(s.cfg)
 	day := c.Query("day")
 	if day == "" {
 		day = time.Now().Format("2006-01-02")
 	}
-	target, err := time.Parse("2006-01-02", day)
+	targetDay, err := time.Parse("2006-01-02", day)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "日期格式错误"})
 		return
 	}
-	cx, err := s.scheduler.client(user)
+	cx, err := s.scheduler.client(&target)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "超星登录失败: " + err.Error()})
 		return
@@ -381,18 +396,33 @@ func (s *Server) handleRoomSeats(c *gin.Context) {
 	}
 	end := c.Query("end")
 	if end == "" {
-		if capEnd, err := cx.RoomCapEndAt(roomID, target); err == nil {
+		if capEnd, err := cx.RoomCapEndAt(roomID, targetDay); err == nil {
 			end = capEnd
 		} else {
 			end = "22:00"
 		}
 	}
-	seats, err := cx.RoomSeats(s.cfg.CXSeatID, roomID, day, start, end)
+	seats, err := cx.RoomSeats(target.SeatID, roomID, day, start, end)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"seats": seats, "day": day, "start": start, "end": end})
+}
+
+// GET /api/me  当前登录账号信息。
+func (s *Server) handleMe(c *gin.Context) {
+	user, ok := s.authUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+	user.fillSchool(s.cfg)
+	c.JSON(http.StatusOK, gin.H{"user": gin.H{
+		"id": user.ID, "username": user.Username,
+		"seat_id": user.SeatID, "dept_id_enc": user.DeptIDEnc,
+		"seat_id_enc": user.SeatIDEnc, "captcha_id": user.CaptchaID, "school": user.SchoolString(),
+	}})
 }
 
 // GET /api/ping
@@ -408,6 +438,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	r.GET("/api/ping", s.handlePing)
 	api := r.Group("/api", s.authMiddleware)
 	{
+		api.GET("/me", s.handleMe)
 		api.GET("/rooms", s.handleRooms)
 		api.GET("/rooms/:id/seats", s.handleRoomSeats)
 		api.POST("/tasks", s.handleCreateTask)
@@ -415,7 +446,11 @@ func (s *Server) setupRouter() *gin.Engine {
 		api.POST("/tasks/:id/action", s.handleTaskAction)
 		api.GET("/my-reserves", s.handleMyReserves)
 		api.POST("/reserve-action", s.handleReserveAction)
-		api.GET("/qr-codes", s.handleQrCodes)
+		api.GET("/accounts", s.handleAccounts)
+		api.POST("/accounts", s.handleAddAccount)
+		api.PUT("/accounts/:id/school", s.handleAccountSchool)
+		api.DELETE("/accounts/:id", s.handleDeleteAccount)
+		api.POST("/batch-task", s.handleBatchTask)
 	}
 	r.Static("/assets", s.cfg.WebDir+"/assets")
 	r.StaticFile("/", s.cfg.WebDir+"/index.html")
@@ -441,3 +476,230 @@ func base64Decode(s string) ([]byte, error) {
 
 var _ = json.Marshal
 var _ = io.Discard
+
+// GET /api/accounts  列出所有账号（批量选座用）。
+func (s *Server) handleAccounts(c *gin.Context) {
+	if _, ok := s.authUser(c); !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+	var list []User
+	s.db.Order("id asc").Find(&list)
+	type acc struct {
+		ID         uint   `json:"id"`
+		Username   string `json:"username"`
+		SeatID     string `json:"seat_id"`
+		DeptIDEnc  string `json:"dept_id_enc"`
+		SeatIDEnc  string `json:"seat_id_enc"`
+		CaptchaID  string `json:"captcha_id"`
+		School     string `json:"school"`
+		CreatedAt  string `json:"created_at"`
+	}
+	out := make([]acc, 0, len(list))
+	for _, u := range list {
+		u.fillSchool(s.cfg)
+		out = append(out, acc{ID: u.ID, Username: u.Username, SeatID: u.SeatID, DeptIDEnc: u.DeptIDEnc, SeatIDEnc: u.SeatIDEnc, CaptchaID: u.CaptchaID, School: u.SchoolString(), CreatedAt: u.CreatedAt.Format("2006-01-02 15:04")})
+	}
+	c.JSON(http.StatusOK, gin.H{"accounts": out})
+}
+
+// POST /api/accounts  添加新超星账号（校验登录后加密存储）。
+func (s *Server) handleAddAccount(c *gin.Context) {
+	if _, ok := s.authUser(c); !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+	var req struct {
+		Username   string `json:"username"`
+		Password   string `json:"password"`
+		SeatID     string `json:"seat_id"`
+		DeptIDEnc  string `json:"dept_id_enc"`
+		SeatIDEnc  string `json:"seat_id_enc"`
+		CaptchaID  string `json:"captcha_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入账号和密码"})
+		return
+	}
+	probe := NewCXClient(s.cfg.CXBase, s.cfg.CXLoginURL, s.cfg.CXSeatID, "", "")
+	if err := probe.Login(req.Username, req.Password); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号登录超星失败: " + err.Error()})
+		return
+	}
+	var existing User
+	if err := s.db.Where("username = ?", req.Username).First(&existing).Error; err == nil {
+		c.JSON(http.StatusOK, gin.H{"account": gin.H{"id": existing.ID, "username": existing.Username}, "msg": "账号已存在"})
+		return
+	}
+	enc, _ := encryptSecret(s.secretKey, []byte(req.Password))
+	u := User{Username: req.Username, Password: enc, SeatID: req.SeatID, DeptIDEnc: req.DeptIDEnc, SeatIDEnc: req.SeatIDEnc, CaptchaID: req.CaptchaID}
+	u.fillSchool(s.cfg) // 未提供的学校参数用默认值补全
+	s.db.Create(&u)
+	c.JSON(http.StatusOK, gin.H{"account": gin.H{"id": u.ID, "username": u.Username, "school": u.SchoolString()}})
+}
+
+// PUT /api/accounts/:id/school  更新账号学校参数（座位 seatId / 单位 enc / 验证码 captchaId）。
+func (s *Server) handleAccountSchool(c *gin.Context) {
+	if _, ok := s.authUser(c); !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+	id, _ := strconv.Atoi(c.Param("id"))
+	var u User
+	if err := s.db.First(&u, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在"})
+		return
+	}
+	var req struct {
+		SeatID    string `json:"seat_id"`
+		DeptIDEnc string `json:"dept_id_enc"`
+		SeatIDEnc string `json:"seat_id_enc"`
+		CaptchaID string `json:"captcha_id"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	updates := map[string]any{}
+	if req.SeatID != "" {
+		updates["seat_id"] = req.SeatID
+	}
+	if req.DeptIDEnc != "" {
+		updates["dept_id_enc"] = req.DeptIDEnc
+	}
+	if req.SeatIDEnc != "" {
+		updates["seat_id_enc"] = req.SeatIDEnc
+	}
+	if req.CaptchaID != "" {
+		updates["captcha_id"] = req.CaptchaID
+	}
+	if len(updates) > 0 {
+		s.db.Model(&User{}).Where("id = ?", uint(id)).Updates(updates)
+	}
+	// 学校变更后缓存客户端失效，下次重新登录
+	s.scheduler.invalidateClient(uint(id))
+	var nu User
+	s.db.First(&nu, id)
+	nu.fillSchool(s.cfg)
+	c.JSON(http.StatusOK, gin.H{"ok": true, "account": gin.H{
+		"id": nu.ID, "username": nu.Username,
+		"seat_id": nu.SeatID, "dept_id_enc": nu.DeptIDEnc,
+		"seat_id_enc": nu.SeatIDEnc, "captcha_id": nu.CaptchaID, "school": nu.SchoolString(),
+	}})
+}
+
+// DELETE /api/accounts/:id  删除账号及其任务。
+func (s *Server) handleDeleteAccount(c *gin.Context) {
+	user, ok := s.authUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+	id, _ := strconv.Atoi(c.Param("id"))
+	if uint(id) == user.ID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不能删除当前登录账号"})
+		return
+	}
+	s.db.Where("user_id = ?", id).Delete(&Task{})
+	s.db.Delete(&User{}, id)
+	s.scheduler.invalidateClient(uint(id))
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// POST /api/batch-task  批量占座：为多个账号创建任务。
+// seats 为空则自动分配该房间的可用座位（每个账号一个，互不重复）。
+func (s *Server) handleBatchTask(c *gin.Context) {
+	admin, ok := s.authUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+	var req struct {
+		RoomID     string   `json:"room_id"`
+		SeatID     string   `json:"seat_id"`
+		Mode       string   `json:"mode"`
+		StartTime  string   `json:"start_time"`
+		RoomName   string   `json:"room_name"`
+		Seats      []string `json:"seats"`
+		AccountIDs []uint   `json:"account_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.RoomID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	if req.StartTime == "" {
+		req.StartTime = "08:00"
+	}
+	if req.Mode == "" {
+		req.Mode = "tomorrow_once"
+	}
+	var accounts []User
+	if len(req.AccountIDs) > 0 {
+		s.db.Where("id IN ?", req.AccountIDs).Find(&accounts)
+	} else {
+		s.db.Find(&accounts)
+	}
+	if len(accounts) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "没有可用的账号"})
+		return
+	}
+	if req.SeatID == "" {
+		req.SeatID = s.cfg.CXSeatID
+	}
+	// 多校支持：房间属于一个学校(req.SeatID)，批量只包含同校账号，跨校账号请切该校房间单独批量。
+	var sameSchool []User
+	for i := range accounts {
+		accounts[i].fillSchool(s.cfg)
+		if accounts[i].SeatID == req.SeatID {
+			sameSchool = append(sameSchool, accounts[i])
+		}
+	}
+	if len(sameSchool) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "所选账号与当前房间不属于同一学校，请切换该校房间后再批量"})
+		return
+	}
+	accounts = sameSchool
+
+	seats := req.Seats
+	cx, _ := s.scheduler.client(admin)
+	if len(seats) < len(accounts) {
+		if cx != nil {
+			day := time.Now().Format("2006-01-02")
+			if req.Mode == "tomorrow_once" {
+				day = time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+			}
+			cells, _ := cx.RoomSeats(req.SeatID, req.RoomID, day, "08:00", "23:30")
+			used := map[string]bool{}
+			for _, s0 := range seats {
+				used[s0] = true
+			}
+			for _, cell := range cells {
+				if cell.Available && !used[cell.Num] {
+					seats = append(seats, cell.Num)
+					used[cell.Num] = true
+				}
+				if len(seats) >= len(accounts) {
+					break
+				}
+			}
+		}
+	}
+	if len(seats) < len(accounts) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("可用座位不足: 需 %d 个账号", len(accounts))})
+		return
+	}
+
+	capEnd, _ := NewCXClient(s.cfg.CXBase, s.cfg.CXLoginURL, req.SeatID, req.RoomID, "").RoomCapEnd(req.RoomID)
+	if capEnd == "" {
+		capEnd = "22:00"
+	}
+	var created []Task
+	for i, acc := range accounts {
+		t := Task{
+			UserID: acc.ID, Type: "seat", Mode: req.Mode,
+			RoomID: req.RoomID, SeatID: req.SeatID, SeatNum: padSeat(seats[i]),
+			RoomName: req.RoomName, StartTime: req.StartTime, DurationMinutes: 240, CapEnd: capEnd,
+			Status: "active", LastAction: "批量任务已创建，等待调度",
+		}
+		s.db.Create(&t)
+		created = append(created, t)
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "created": created})
+}

@@ -34,9 +34,12 @@ body {
   padding: 10px 14px; font-size: 14px; background: #fbfcfe; outline: none;
 }
 .input:focus, .select:focus { border-color: #3b7cff; background: #fff; }
+.input-sm { width: 100%; border: 1.5px solid #e4e9f2; border-radius: 10px; padding: 7px 10px; font-size: 12px; background: #fbfcfe; outline: none; min-width: 130px; flex: 1; }
+.input-sm:focus { border-color: #3b7cff; background: #fff; }
+.school-edit { padding: 8px 10px; background: #f7faff; border: 1px solid #e4e9f2; border-radius: 12px; }
 .label { font-size: 13px; color: #7c8698; margin: 12px 0 6px; display: block; }
 
-/* 模式选择（胶囊radio） */
+/* 胶囊 */
 .pills { display: flex; gap: 10px; flex-wrap: wrap; }
 .pill {
   border: 1.5px solid #e4e9f2; border-radius: 999px; padding: 8px 16px; font-size: 13px;
@@ -64,15 +67,12 @@ body {
 .toolbar .logo { font-size: 20px; font-weight: 700; color: #2b3445; display: flex; align-items: center; gap: 10px; }
 .toolbar .logo b { color: #3b7cff; }
 
-/* 列表 */
 .list-item {
   display: flex; align-items: center; gap: 10px; padding: 12px 4px;
   border-bottom: 1px solid #f0f3f9; font-size: 13.5px; flex-wrap: wrap;
 }
 .list-item:last-child { border-bottom: none; }
-.tag {
-  font-size: 11.5px; border-radius: 999px; padding: 3px 10px; font-weight: 600;
-}
+.tag { font-size: 11.5px; border-radius: 999px; padding: 3px 10px; font-weight: 600; }
 .tag.blue { background: #eef4ff; color: #3b7cff; }
 .tag.green { background: #e8f8ef; color: #1e9e63; }
 .tag.gray { background: #f1f3f8; color: #8a93a6; }
@@ -90,14 +90,6 @@ body {
 }
 .dialog h4 { margin-bottom: 14px; font-size: 16px; }
 .dialog .btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
-
-/* 上传区 */
-.upload {
-  border: 2px dashed #cdd8ea; border-radius: 16px; padding: 18px; text-align: center;
-  cursor: pointer; color: #7c8698; font-size: 13.5px; transition: 0.2s; background: #fbfcfe;
-}
-.upload:hover { border-color: #3b7cff; color: #3b7cff; }
-.upload img { max-width: 100%; max-height: 180px; border-radius: 12px; }
 
 /* 座位网格 */
 .seat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
@@ -120,3 +112,9 @@ body {
 }
 .footer a { color: #3b7cff; text-decoration: none; }
 .footer a:hover { text-decoration: underline; }
+
+/* 账号管理浮层 */
+.acc-pop {
+  position: fixed; right: 24px; top: 76px; width: 340px; background: #fff; border-radius: 18px;
+  box-shadow: 0 14px 40px rgba(24,30,60,0.12); padding: 18px; z-index: 60;
+}

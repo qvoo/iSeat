@@ -28,6 +28,9 @@ type CXClient struct {
 	SeatID     string
 	RoomID     string
 	SeatNum    string
+	DeptIDEnc  string // 学校/单位 deptIdEnc
+	SeatIDEnc  string // 座位业务 seatIdEnc
+	CaptchaID  string // 学校滑块验证码 captchaId
 	UserAgent  string
 	Debug      bool
 
@@ -45,6 +48,19 @@ func NewCXClient(baseOffice, loginURL, seatID, roomID, seatNum string) *CXClient
 		SeatNum:    seatNum,
 		UserAgent:  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 		client:     &http.Client{Jar: jar, Timeout: 30 * time.Second},
+	}
+}
+
+// SetSchool 设置该客户端的学校参数（deptIdEnc / seatIdEnc / captchaId）。
+func (c *CXClient) SetSchool(deptIDEnc, seatIDEnc, captchaID string) {
+	if deptIDEnc != "" {
+		c.DeptIDEnc = deptIDEnc
+	}
+	if seatIDEnc != "" {
+		c.SeatIDEnc = seatIDEnc
+	}
+	if captchaID != "" {
+		c.CaptchaID = captchaID
 	}
 }
 
@@ -271,7 +287,11 @@ func (r *ReserveInfo) RoomIDStr() string {
 func (c *CXClient) MyReserves(seatID string) (cur []ReserveInfo, near []ReserveInfo, err error) {
 	form := url.Values{}
 	form.Set("seatId", seatID)
-	form.Set("seatIdEnc", "9dffbb2440d6a600")
+	if c.SeatIDEnc != "" {
+		form.Set("seatIdEnc", c.SeatIDEnc)
+	} else {
+		form.Set("seatIdEnc", "9dffbb2440d6a600")
+	}
 	_, body, err := c.postForm("/data/apps/seatengine/index", form)
 	if err != nil {
 		return nil, nil, err
@@ -488,7 +508,11 @@ func (c *CXClient) RoomList(seatID, day string) ([]RoomItem, error) {
 	for {
 		form := url.Values{}
 		form.Set("day", day)
-		form.Set("deptIdEnc", "0fd2b43990df8985")
+		if c.DeptIDEnc != "" {
+			form.Set("deptIdEnc", c.DeptIDEnc)
+		} else {
+			form.Set("deptIdEnc", "0fd2b43990df8985")
+		}
 		form.Set("seatId", seatID)
 		form.Set("cpage", strconv.Itoa(page))
 		form.Set("pageSize", strconv.Itoa(pageSize))

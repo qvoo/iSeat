@@ -93,7 +93,11 @@ func cxUuid() string {
 }
 
 // Solve 解滑块验证码返回 validate token。
-func (s *CaptchaSolver) Solve(referer string, maxAttempt int) (string, error) {
+// captchaID 为该校/单位座位系统的验证码 captchaId（默认 cxCaptchaID）。
+func (s *CaptchaSolver) Solve(referer string, maxAttempt int, captchaID string) (string, error) {
+	if captchaID == "" {
+		captchaID = cxCaptchaID
+	}
 	offsets := []int{}
 	for _, v := range strings.Split(cxOffsetsInit, ",") {
 		n, _ := strconv.Atoi(v)
@@ -103,7 +107,7 @@ func (s *CaptchaSolver) Solve(referer string, maxAttempt int) (string, error) {
 		maxAttempt = len(offsets)
 	}
 	for i := 0; i < maxAttempt; i++ {
-		token, err := s.solveOnce(referer, offsets[i])
+		token, err := s.solveOnce(referer, offsets[i], captchaID)
 		if err != nil {
 			return "", err
 		}
@@ -118,18 +122,18 @@ func (s *CaptchaSolver) Solve(referer string, maxAttempt int) (string, error) {
 	return "", fmt.Errorf("滑块验证失败(%d次)", maxAttempt)
 }
 
-func (s *CaptchaSolver) solveOnce(referer string, offset int) (string, error) {
-	conf, err := s.jsonp(fmt.Sprintf("%s/captcha/get/conf?captchaId=%s&callback=%s", cxBase, cxCaptchaID, cxCallback), referer)
+func (s *CaptchaSolver) solveOnce(referer string, offset int, captchaID string) (string, error) {
+	conf, err := s.jsonp(fmt.Sprintf("%s/captcha/get/conf?captchaId=%s&callback=%s", cxBase, captchaID, cxCallback), referer)
 	if err != nil {
 		return "", err
 	}
 	tv, _ := conf["t"].(float64)
 	serverTime := int64(tv)
 	captchaKey := cxMd5(strconv.FormatInt(serverTime, 10) + cxUuid())
-	token := cxMd5(strconv.FormatInt(serverTime, 10)+cxCaptchaID+cxType+captchaKey) + ":" + strconv.FormatInt(serverTime+300000, 10)
-	iv := cxMd5(cxCaptchaID + cxType + strconv.FormatInt(time.Now().UnixMilli(), 10) + cxUuid())
+	token := cxMd5(strconv.FormatInt(serverTime, 10)+captchaID+cxType+captchaKey) + ":" + strconv.FormatInt(serverTime+300000, 10)
+	iv := cxMd5(captchaID + cxType + strconv.FormatInt(time.Now().UnixMilli(), 10) + cxUuid())
 	imgURL := fmt.Sprintf("%s/captcha/get/verification/image?captchaId=%s&type=%s&version=%s&captchaKey=%s&token=%s&referer=%s&iv=%s&callback=%s",
-		cxBase, cxCaptchaID, cxType, cxVersion, captchaKey,
+		cxBase, captchaID, cxType, cxVersion, captchaKey,
 		url.QueryEscape(token), url.QueryEscape(referer), iv, cxCallback)
 	imgResp, err := s.jsonp(imgURL, referer)
 	if err != nil {
@@ -163,7 +167,7 @@ func (s *CaptchaSolver) solveOnce(referer string, offset int) (string, error) {
 	}
 	clickArr := fmt.Sprintf(`[{"x":%d}]`, bestX)
 	checkURL := fmt.Sprintf("%s/captcha/check/verification/result?captchaId=%s&type=%s&token=%s&textClickArr=%s&coordinate=%s&runEnv=%d&version=%s&t=c&iv=%s&callback=%s",
-		cxBase, cxCaptchaID, cxType, imgToken,
+		cxBase, captchaID, cxType, imgToken,
 		url.QueryEscape(clickArr), url.QueryEscape("[]"),
 		cxRunEnv, cxVersion, iv, cxCallback)
 	ck, err := s.jsonp(checkURL, referer)

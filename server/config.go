@@ -11,20 +11,26 @@ type AppConfig struct {
 	SQLitePath string // SQLITE_PATH 默认 seatbook.db
 	CXLoginURL string
 	CXBase     string
-	CXSeatID   string // 座位业务 seatId(105)
+	CXSeatID   string // 座位业务 seatId(105) —— 默认学校
+	CXDeptIDEnc string // 单位/校区 deptIdEnc
+	CXSeatIDEnc string // 座位业务 seatIdEnc
+	CXCptchaID  string // 该学校滑块验证码 captchaId
 	WebDir     string // 前端静态目录
 	// 保留业务常量
 }
 
 func loadConfig() *AppConfig {
 	return &AppConfig{
-		Port:       envOr("PORT", "5251"),
-		MySQLDSN:   os.Getenv("MYSQL_DSN"),
-		SQLitePath: envOr("SQLITE_PATH", "seatbook.db"),
-		CXLoginURL: envOr("CX_LOGIN_URL", "https://passport2.chaoxing.com/fanyalogin"),
-		CXBase:     envOr("CX_BASE", "https://office.chaoxing.com"),
-		CXSeatID:   envOr("CX_SEAT_ID", "105"),
-		WebDir:     envOr("WEB_DIR", "../web/dist"),
+		Port:        envOr("PORT", "5251"),
+		MySQLDSN:    os.Getenv("MYSQL_DSN"),
+		SQLitePath:  envOr("SQLITE_PATH", "seatbook.db"),
+		CXLoginURL:  envOr("CX_LOGIN_URL", "https://passport2.chaoxing.com/fanyalogin"),
+		CXBase:      envOr("CX_BASE", "https://office.chaoxing.com"),
+		CXSeatID:    envOr("CX_SEAT_ID", "105"),
+		CXDeptIDEnc: envOr("CX_DEPT_ENC", "0fd2b43990df8985"),
+		CXSeatIDEnc: envOr("CX_SEAT_ENC", "9dffbb2440d6a600"),
+		CXCptchaID:  envOr("CX_CAPTCHA_ID", "42sxgHoTPTKbt0uZxPJ7ssOvtXr3ZgZ1"),
+		WebDir:      envOr("WEB_DIR", "../web/dist"),
 	}
 }
 

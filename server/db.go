@@ -15,6 +15,10 @@ type User struct {
 	Username  string    `gorm:"uniqueIndex;size:64" json:"username"`
 	Password  string    `json:"-"` // AES 加密后的密文存储
 	UID       string    `json:"uid"`
+	SeatID    string    `gorm:"size:32" json:"seat_id"`      // 该账号所属学校/单位的座位业务 seatId
+	DeptIDEnc string    `gorm:"size:64" json:"dept_id_enc"`  // 该账号学校/单位 deptIdEnc
+	SeatIDEnc string    `gorm:"size:64" json:"seat_id_enc"`  // 该账号学校/单位 seatIdEnc
+	CaptchaID string    `gorm:"size:64" json:"captcha_id"`   // 该账号学校/单位的滑块验证码 captchaId
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -45,8 +49,9 @@ type Task struct {
 	Status            string    `gorm:"size:16;index" json:"status"` // active|paused|done|error
 	LastAction        string    `gorm:"type:text" json:"last_action"`
 	LastOK            bool      `json:"last_ok"`
-	ReserveID         int64     `json:"reserve_id"` // 最近一次预约 id
-	ReserveEndAt      int64     `json:"reserve_end_at"` // 最近预约结束毫秒时间戳
+	ReserveID         int64     `json:"reserve_id"`         // 最近一次预约 id
+	ReserveEndAt      int64     `json:"reserve_end_at"`     // 最近预约结束毫秒时间戳
+	Username          string    `gorm:"-" json:"username"`  // 所属账号（联表展示）
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -63,6 +68,27 @@ type QrCode struct {
 	UploadCount int       `json:"upload_count"` // 被使用/上传次数
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// fillSchool 若账号缺少学校参数，回填系统默认值（保留已配置的字段）。
+func (u *User) fillSchool(cfg *AppConfig) {
+	if u.SeatID == "" {
+		u.SeatID = cfg.CXSeatID
+	}
+	if u.DeptIDEnc == "" {
+		u.DeptIDEnc = cfg.CXDeptIDEnc
+	}
+	if u.SeatIDEnc == "" {
+		u.SeatIDEnc = cfg.CXSeatIDEnc
+	}
+	if u.CaptchaID == "" {
+		u.CaptchaID = cfg.CXCptchaID
+	}
+}
+
+// SchoolString 账号学校标识（用于区分不同学校）。
+func (u *User) SchoolString() string {
+	return u.SeatID + "/" + u.DeptIDEnc
 }
 
 // OpenDB 打开数据库（MySQL 优先，未配置则 SQLite 本地兜底）。

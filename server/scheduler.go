@@ -40,7 +40,8 @@ func (s *Scheduler) client(user *User) (*CXClient, error) {
 	if c, ok := s.clients[user.ID]; ok {
 		return c, nil
 	}
-	c := NewCXClient(s.cfg.CXBase, s.cfg.CXLoginURL, s.cfg.CXSeatID, "", "")
+	c := NewCXClient(s.cfg.CXBase, s.cfg.CXLoginURL, user.SeatID, "", "")
+	c.SetSchool(user.DeptIDEnc, user.SeatIDEnc, user.CaptchaID)
 	// 解密存储密码（AES-256-GCM）后登录
 	pwd, err := decryptSecret(s.secretKey, user.Password)
 	if err != nil {
@@ -144,7 +145,7 @@ func (s *Scheduler) doOneShot(c *CXClient, t *Task, dayOffset int, startTime str
 	day := target.Format("2006-01-02")
 	cur, near, _ := c.MyReserves(t.SeatID)
 	all := append(cur, near...)
-	myRes := filterTaskReserves(all, t) // 该任务座位、今天的/目标天的
+	myRes := filterTaskReservesOnDay(all, t, target) // 目标日、有效状态
 	if len(myRes) > 0 {
 		// 已有预约：处理签到
 		s.handleSign(c, t, myRes)
@@ -297,7 +298,7 @@ func (s *Scheduler) book(c *CXClient, t *Task, day string, segStart, segEnd time
 	}
 	referer := fmt.Sprintf("%s/front/apps/seatengine/code?id=%s&seatNum=%s&seatId=%s",
 		s.cfg.CXBase, t.RoomID, t.SeatNum, t.SeatID)
-	token, err := s.solver.Solve(referer, 11)
+	token, err := s.solver.Solve(referer, 11, c.CaptchaID)
 	if err != nil {
 		return err
 	}
@@ -340,6 +341,33 @@ func filterTaskReserves(all []ReserveInfo, t *Task) []ReserveInfo {
 	var out []ReserveInfo
 	for _, r := range all {
 		if r.RoomIDStr() == t.RoomID && r.SeatNum == padSeat(t.SeatNum) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// activeReserve 判断该预约是否"有效占用"（待签到/使用中/暂离/被监督）。
+// status=2(退座)、7(已取消) 视为已释放，不应阻止再次预约。
+func activeReserve(r ReserveInfo) bool {
+	switch r.Status {
+	case 0, 1, 3, 5, 9:
+		return true
+	default:
+		return false
+	}
+}
+
+// filterTaskReservesOnDay 仅保留"目标日 + 有效状态"的预约。
+// 用于一次性预约：已退座/已取消的历史记录不能再当"已有预约"，否则永远无法重新预约。
+func filterTaskReservesOnDay(all []ReserveInfo, t *Task, target time.Time) []ReserveInfo {
+	var out []ReserveInfo
+	for _, r := range filterTaskReserves(all, t) {
+		if !activeReserve(r) {
+			continue
+		}
+		st := time.UnixMilli(r.StartTime)
+		if st.Year() == target.Year() && st.YearDay() == target.YearDay() {
 			out = append(out, r)
 		}
 	}

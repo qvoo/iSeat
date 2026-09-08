@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS users (
   username VARCHAR(64) NOT NULL UNIQUE COMMENT 'chaoxing账号',
   password VARCHAR(512) NOT NULL COMMENT 'AES加密后的密码',
   uid VARCHAR(32) DEFAULT '',
+  seat_id VARCHAR(32) DEFAULT '105' COMMENT '该校座位业务ID',
+  dept_id_enc VARCHAR(64) DEFAULT '' COMMENT '该校/单位 deptIdEnc',
+  seat_id_enc VARCHAR(64) DEFAULT '' COMMENT '该校座位业务 seatIdEnc',
+  captcha_id VARCHAR(64) DEFAULT '' COMMENT '该校滑块验证码 captchaId',
   created_at DATETIME(3),
   updated_at DATETIME(3)
 );

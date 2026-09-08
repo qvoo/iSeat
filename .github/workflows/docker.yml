@@ -43,15 +43,13 @@ jobs:
             ghcr.io/qvoo/iseat:${{ steps.meta.outputs.TAG }}
 
       # 构建离线 tar 镜像包，用于内网/无外网环境（Releases 附件）
+      # 用 docker driver 构建出本地镜像再 docker save，保证 tar 可被 docker load。
       - name: Build offline image tar
-        id: tarbuild
         run: |
+          docker buildx create --name localtar --driver docker --use 2>/dev/null || true
           mkdir -p out
-          docker build \
-            --platform linux/amd64 \
-            -t iseat:latest \
-            --output type=docker,dest=out/iseat.tar \
-            .
+          docker build --platform linux/amd64 -t iseat:latest .
+          docker save iseat:latest -o out/iseat.tar
           ls -lh out/iseat.tar
 
       - name: Create GitHub Release

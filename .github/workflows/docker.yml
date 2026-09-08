@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
         id: meta
         run: echo "TAG=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      - name: Build and push to GHCR
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -41,3 +41,31 @@ jobs:
           tags: |
             ghcr.io/qvoo/iseat:latest
             ghcr.io/qvoo/iseat:${{ steps.meta.outputs.TAG }}
+
+      # 构建离线 tar 镜像包，用于内网/无外网环境（Releases 附件）
+      - name: Build offline image tar
+        id: tarbuild
+        run: |
+          mkdir -p out
+          docker build \
+            --platform linux/amd64 \
+            -t iseat:latest \
+            --output type=docker,dest=out/iseat.tar \
+            .
+          ls -lh out/iseat.tar
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            ## iSeat ${{ github.ref_name }}
+
+            - **方式 A（推荐）**：`docker pull ghcr.io/qvoo/iseat:${{ steps.meta.outputs.TAG }}`
+            - **方式 B（离线）**：下载下方 `iseat.tar`，然后
+              ```bash
+              docker load -i iseat.tar
+              docker run -d --name iseat -p 5251:5251 -v iseat_data:/data iseat:latest
+              ```
+          files: out/iseat.tar

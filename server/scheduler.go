@@ -112,13 +112,23 @@ func (s *Scheduler) process(t *Task) {
 	}
 	renewAhead := 10 * time.Minute
 
+	// mode 决定"首日"与展示；auto_renew 控制是否走"提前预约引擎"
+	if t.AutoRenew {
+		// 提前预约：首日按 mode，之后每天滚动提前预约下一段/明日
+		dayOffset := 0
+		if t.Mode == "tomorrow_once" {
+			dayOffset = 1
+		}
+		s.doDaily(c, t, dayOffset, startTime, dur, renewAhead)
+		return
+	}
 	switch t.Mode {
 	case "today_once":
 		s.doOneShot(c, t, 0, startTime, dur)
 	case "tomorrow_once":
 		s.doOneShot(c, t, 1, startTime, dur)
-	case "both", "qr":
-		s.doDaily(c, t, startTime, dur, renewAhead)
+	case "both":
+		s.doDaily(c, t, 0, startTime, dur, renewAhead)
 	default:
 		s.setTask(t, "未知任务模式: "+t.Mode, false)
 	}
@@ -139,22 +149,26 @@ func (s *Scheduler) capEndFor(c *CXClient, t *Task, day time.Time) string {
 	return "22:00"
 }
 
-// doOneShot 一次性预约（today_once / tomorrow_once）。
-// 若任务开启 auto_renew：首段预约成功后转成持续续约（both），之后每天自动续约+签到。
+// doOneShot 一次性预约（today_once / tomorrow_once，auto_renew=false）。
+// 只预约目标一天一次，不做提前续约；仅处理签到。
 func (s *Scheduler) doOneShot(c *CXClient, t *Task, dayOffset int, startTime string, dur time.Duration) {
 	target := time.Now().AddDate(0, 0, dayOffset)
 	day := target.Format("2006-01-02")
 	cur, near, _ := c.MyReserves(t.SeatID)
 	all := append(cur, near...)
-	myRes := filterTaskReserves(all, t) // 该任务座位（含各状态，供续约/签到判断）
+	myRes := filterTaskReserves(all, t)
 
-	// 已有预约：若开启续约则转持续并交给 doDaily（含续约+签到），否则仅签到
-	if len(myRes) > 0 {
-		if t.AutoRenew {
-			s.promoteToDaily(t)
-			return
+	// 只看"有效"预约（待签到/使用中/暂离/被监督），历史已取消/已退座不能再当作"已有预约"
+	valid := make([]ReserveInfo, 0, len(myRes))
+	for _, r := range myRes {
+		if activeReserve(r) {
+			valid = append(valid, r)
 		}
-		s.handleSign(c, t, myRes)
+	}
+
+	if len(valid) > 0 {
+		// 已有有效预约：处理签到
+		s.handleSign(c, t, valid)
 		return
 	}
 
@@ -176,13 +190,9 @@ func (s *Scheduler) doOneShot(c *CXClient, t *Task, dayOffset int, startTime str
 		return
 	}
 	s.setTask(t, fmt.Sprintf("已预约 %s %s~%s", day, segStart.Format("15:04"), segEnd.Format("15:04")), true)
-	// 首段预约成功，若开启自动续约则转为持续模式
-	if t.AutoRenew {
-		s.promoteToDaily(t)
-	}
 }
 
-// promoteToDaily 把一次性任务转为持续续约（both），使后续轮询走 doDaily 续约+签到。
+// promoteToDaily 兼容保留（不再被 auto_renew=yes 调用，保留以兼容旧任务）。
 func (s *Scheduler) promoteToDaily(t *Task) {
 	if t.Mode == "both" || t.Mode == "qr" {
 		return
@@ -192,25 +202,40 @@ func (s *Scheduler) promoteToDaily(t *Task) {
 	dbSave(s.db, t)
 }
 
-// doDaily 每日循环占座（both / qr：今天到闭馆、明天到闭馆、天天循环）。
-func (s *Scheduler) doDaily(c *CXClient, t *Task, startTime string, dur, renewAhead time.Duration) {
+// doDaily 提前预约引擎（auto_renew=true 或 mode=both）。
+// 规则：
+//   - 首日根据 dayOffset（0=今天,1=明天），若目标日尚无有效预约且窗口已开则约第一段；
+//   - 已有有效预约时：滚动"提前预约"下一段（不等结束前10分钟）；
+//   - 明天窗口(19:00)已开且明日无预约时，优先预约明日第一段；
+//   - 每个时段在其签到窗口内自动签到。
+func (s *Scheduler) doDaily(c *CXClient, t *Task, dayOffset int, startTime string, dur, renewAhead time.Duration) {
 	now := time.Now()
 	cur, near, _ := c.MyReserves(t.SeatID)
 	all := append(cur, near...)
 	myRes := filterTaskReserves(all, t)
-	capEnd := s.capEndFor(c, t, now)
-	capTime, err := parseHM(capEnd)
-	if err != nil {
-		capTime, _ = time.Parse("15:04", "22:00")
-	}
 
-	// 找当前最新一段有效预约
-	var latestEnd time.Time
+	// 目标首日
+	target := now.AddDate(0, 0, dayOffset)
+	targetDay := target.Format("2006-01-02")
+
+	// 找当前最新一段有效预约，并记录是否已提前约好"未来段"(待履约)
+	var latestEnd, latestEndDay time.Time
+	hasFuture := false
+	hasTomorrow := false // 明日是否已有有效预约
+	tomorrow := now.AddDate(0, 0, 1)
 	for _, r := range myRes {
-		if r.Status == 0 || r.Status == 1 || r.Status == 3 || r.Status == 5 || r.Status == 9 {
+		if activeReserve(r) {
+			st := time.UnixMilli(r.StartTime)
 			e := time.UnixMilli(r.EndTime)
 			if e.After(latestEnd) {
 				latestEnd = e
+				latestEndDay = e
+			}
+			if st.After(now) {
+				hasFuture = true
+			}
+			if sameDay(st, tomorrow) {
+				hasTomorrow = true
 			}
 		}
 	}
@@ -218,23 +243,50 @@ func (s *Scheduler) doDaily(c *CXClient, t *Task, startTime string, dur, renewAh
 	// 签到
 	s.handleSign(c, t, myRes)
 
-	// 无任何预约 -> 从今天开始
+	// 无任何有效预约 -> 约目标首日第一段
 	if latestEnd.IsZero() {
-		day := now.Format("2006-01-02")
-		segStart, segEnd := segment(c, t, now, startTime, dur, capEnd)
-		if segEnd.Sub(segStart) < time.Hour {
-			s.setTask(t, "今日剩余时段不足1小时", false)
+		capEnd := s.capEndFor(c, t, target)
+		openAt := time.Date(target.AddDate(0, 0, -1).Year(), target.AddDate(0, 0, -1).Month(), target.AddDate(0, 0, -1).Day(), 19, 0, 0, 0, target.Location())
+		if now.Before(openAt) {
+			s.setTask(t, fmt.Sprintf("等待预约窗口开启(%s)", openAt.Format("2006-01-02 15:04")), true)
 			return
 		}
-		if err := s.book(c, t, day, segStart, segEnd); err != nil {
+		segStart, segEnd := segment(c, t, target, startTime, dur, capEnd)
+		if segEnd.Sub(segStart) < time.Hour {
+			s.setTask(t, fmt.Sprintf("%s剩余时段不足1小时", targetDay), false)
+			return
+		}
+		if err := s.book(c, t, targetDay, segStart, segEnd); err != nil {
 			s.setTask(t, "预约失败: "+err.Error(), false)
 			return
 		}
-		s.setTask(t, fmt.Sprintf("已预约 %s %s~%s", day, segStart.Format("15:04"), segEnd.Format("15:04")), true)
+		s.setTask(t, fmt.Sprintf("已预约 %s %s~%s", targetDay, segStart.Format("15:04"), segEnd.Format("15:04")), true)
 		return
 	}
 
-	// 已有预约：续约下一段
+	// 已有预约：先尝试预约明日第一段（窗口19:00已开且明日无约），保证提前占住明天
+	// 前提：已约段已覆盖今天（或已到今晚），才能向明天滚动
+	if !hasTomorrow {
+		if s.tryBookTomorrow(c, t, startTime, dur) {
+			return
+		}
+	}
+
+	// 明天已有约，或明日窗口未开：滚动"提前预约"今天/后续段
+	if hasFuture && hasTomorrow {
+		// 今天+明天都已排好：等待，只签到
+		s.setTask(t, fmt.Sprintf("已预约至 %s（提前预约完成），等待签到", latestEndDay.Format("2006-01-02 15:04")), true)
+		return
+	}
+	if hasFuture {
+		// 已有未来段(待履约)，等待其开始，到时自动签到
+		s.setTask(t, fmt.Sprintf("已预约至 %s（已提前续约下一段），等待签到", latestEndDay.Format("2006-01-02 15:04")), true)
+		return
+	}
+
+	// 无未来段：当前进行中的最后一段，立即预约下一段（提前预约/提前约满）
+	capEnd := s.capEndFor(c, t, latestEndDay)
+	capTime, _ := parseHM(capEnd)
 	nextStart := latestEnd
 	if nextStart.Before(now) {
 		nextStart = ceilQuarter(now.Add(2 * time.Minute))
@@ -245,26 +297,18 @@ func (s *Scheduler) doDaily(c *CXClient, t *Task, startTime string, dur, renewAh
 		nextEnd = capTime
 	}
 	if nextEnd.Sub(nextStart) >= time.Hour {
-		// 等到结束前 renewAhead 再续约
-		if time.Until(nextStart.Add(-renewAhead)) > 0 {
-			s.setTask(t, fmt.Sprintf("已预约至 %s，下次续约 %s", latestEnd.Format("2006-01-02 15:04"), nextStart.Add(-renewAhead).Format("01-02 15:04")), true)
-			return
-		}
 		day := nextStart.Format("2006-01-02")
 		if err := s.book(c, t, day, nextStart, nextEnd); err != nil {
-			s.setTask(t, "续约失败: "+err.Error(), false)
+			s.setTask(t, "提前续约失败: "+err.Error(), false)
 			return
 		}
-		s.setTask(t, fmt.Sprintf("续约成功 %s %s~%s", day, nextStart.Format("15:04"), nextEnd.Format("15:04")), true)
+		s.setTask(t, fmt.Sprintf("已提前续约 %s %s~%s", day, nextStart.Format("15:04"), nextEnd.Format("15:04")), true)
 		return
 	}
 
 	// 今日已到闭馆 -> 预约明日第一段
-	tomorrow := time.Now().AddDate(0, 0, 1)
-	day := tomorrow.Format("2006-01-02")
-	prev := tomorrow.AddDate(0, 0, -1)
-	openAt := time.Date(prev.Year(), prev.Month(), prev.Day(), 19, 0, 0, 0, prev.Location())
-	if time.Now().Before(openAt) {
+	openAt := time.Date(tomorrow.AddDate(0, 0, -1).Year(), tomorrow.AddDate(0, 0, -1).Month(), tomorrow.AddDate(0, 0, -1).Day(), 19, 0, 0, 0, tomorrow.Location())
+	if now.Before(openAt) {
 		s.setTask(t, "今日占座至闭馆，等待明日窗口(19:00)", true)
 		return
 	}
@@ -274,11 +318,31 @@ func (s *Scheduler) doDaily(c *CXClient, t *Task, startTime string, dur, renewAh
 		s.setTask(t, "明日剩余时段不足1小时", false)
 		return
 	}
-	if err := s.book(c, t, day, segStart, segEnd); err != nil {
+	if err := s.book(c, t, tomorrow.Format("2006-01-02"), segStart, segEnd); err != nil {
 		s.setTask(t, "明日预约失败: "+err.Error(), false)
 		return
 	}
 	s.setTask(t, fmt.Sprintf("已预约明日 %s~%s", segStart.Format("15:04"), segEnd.Format("15:04")), true)
+}
+
+// tryBookTomorrow 若明日窗口(19:00)已开且明日无有效预约，预约明日第一段。
+func (s *Scheduler) tryBookTomorrow(c *CXClient, t *Task, startTime string, dur time.Duration) bool {
+	tomorrow := time.Now().AddDate(0, 0, 1)
+	prev := tomorrow.AddDate(0, 0, -1)
+	openAt := time.Date(prev.Year(), prev.Month(), prev.Day(), 19, 0, 0, 0, prev.Location())
+	if time.Now().Before(openAt) {
+		return false // 窗口未开
+	}
+	tomorrowCap := s.capEndFor(c, t, tomorrow)
+	segStart, segEnd := segment(c, t, tomorrow, startTime, dur, tomorrowCap)
+	if segEnd.Sub(segStart) < time.Hour {
+		return false
+	}
+	if err := s.book(c, t, tomorrow.Format("2006-01-02"), segStart, segEnd); err != nil {
+		return false
+	}
+	s.setTask(t, fmt.Sprintf("已提前预约明日 %s~%s", segStart.Format("15:04"), segEnd.Format("15:04")), true)
+	return true
 }
 
 // handleSign 处理待签到预约。
@@ -296,7 +360,7 @@ func (s *Scheduler) handleSign(c *CXClient, t *Task, myRes []ReserveInfo) {
 		if now.After(start.Add(20 * time.Minute)) {
 			continue // 窗口已过
 		}
-		resp, err := c.SignIn(r.ID)
+		resp, err := c.SignIn(r.ID, t.RoomID, t.SeatID)
 		if err != nil {
 			s.setTask(t, "签到失败: "+err.Error(), false)
 			continue
@@ -376,6 +440,13 @@ func activeReserve(r ReserveInfo) bool {
 	default:
 		return false
 	}
+}
+
+// sameDay 判断两个时间是否同一天。
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
 }
 
 // filterTaskReservesOnDay 仅保留"目标日 + 有效状态"的预约。

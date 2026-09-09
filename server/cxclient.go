@@ -234,12 +234,12 @@ func (c *CXClient) ParseReserve(respText string) (int64, int64, error) {
 	return m.Data.SeatReserve.ID, m.Data.SeatReserve.EndTime, nil
 }
 
-// SignIn 签到。
-func (c *CXClient) SignIn(reserveID int64) (string, error) {
+// SignIn 签到（roomID/seatID 显式传入，不依赖 client 瞬时状态，避免会话重登后为空）。
+func (c *CXClient) SignIn(reserveID int64, roomID, seatID string) (string, error) {
 	form := url.Values{}
 	form.Set("id", strconv.FormatInt(reserveID, 10))
-	form.Set("seatId", c.SeatID)
-	form.Set("roomId", c.RoomID)
+	form.Set("seatId", seatID)
+	form.Set("roomId", roomID)
 	_, body, err := c.postForm("/data/apps/seatengine/sign", form)
 	if err != nil {
 		return "", err

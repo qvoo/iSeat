@@ -66,44 +66,54 @@
       </div>
 
       <!-- 功能2: 任务管理 -->
-      <div class="card">
+      <div class="card card-scroll">
         <h3><span class="icon" style="background:#8a6cf0">2</span> 任务管理</h3>
-        <div v-if="scopedTasks.length === 0" class="muted">暂无占座任务{{ scope.mode==='single' ? '（' + currentName + '）' : '' }}</div>
-        <div v-for="t in scopedTasks" :key="t.id" class="list-item">
-          <span class="tag blue">座位{{ t.seat_num }}</span>
-          <span v-if="t.auto_renew" class="tag orange">持续续约</span>
-          <span class="grow">
-            <b>{{ roomsMap[t.room_id] || t.room_name || '房间 '+t.room_id }}</b> · <span class="muted">{{ modeText(t.mode) }}</span>
-            <span v-if="t.username" class="muted"> | {{ t.username }}</span><br/>
-            <span class="muted">{{ t.last_action }}</span>
-          </span>
-          <span class="tag" :class="t.status==='active' ? 'green' : 'gray'">{{ t.status === 'active' ? '运行中' : t.status === 'paused' ? '已暂停' : '已结束' }}</span>
-          <button v-if="t.status==='active'" class="btn btn-ghost btn-sm" @click="taskAction(t,'pause')">暂停</button>
-          <button v-else class="btn btn-ghost btn-sm" @click="taskAction(t,'resume')">恢复</button>
-          <button class="btn btn-danger btn-sm" @click="taskAction(t,'remove')">删除</button>
-        </div>
+        <div class="card-body">
+          <div v-if="scopedTasks.length === 0" class="muted">暂无占座任务{{ scope.mode==='single' ? '（' + currentName + '）' : '' }}</div>
+          <div class="scroll-list" v-else>
+            <div v-for="t in scopedTasks" :key="t.id" class="list-item">
+              <span class="tag blue">座位{{ t.seat_num }}</span>
+              <span v-if="t.auto_renew" class="tag orange">提前预约</span>
+              <span class="grow">
+                <b>{{ roomsMap[t.room_id] || t.room_name || '房间 '+t.room_id }}</b> · <span class="muted">{{ modeText(t.mode) }}</span>
+                <span v-if="t.username" class="muted"> | {{ t.username }}</span><br/>
+                <span class="muted">{{ t.last_action }}</span>
+              </span>
+              <span class="tag" :class="t.status==='active' ? 'green' : 'gray'">{{ t.status === 'active' ? '运行中' : t.status === 'paused' ? '已暂停' : '已结束' }}</span>
+              <button v-if="t.status==='active'" class="btn btn-ghost btn-sm" @click="taskAction(t,'pause')">暂停</button>
+              <button v-else class="btn btn-ghost btn-sm" @click="taskAction(t,'resume')">恢复</button>
+              <button class="btn btn-danger btn-sm" @click="taskAction(t,'remove')">删除</button>
+            </div>
+          </div>
 
-        <div style="margin-top:14px;border-top:1px solid #f0f3f9;padding-top:12px">
-          <h3 style="font-size:14px;margin-bottom:6px">当前预约（{{ scope.mode==='all' ? '全部账号' : currentName }}）</h3>
-          <div v-if="curReserves.length === 0" class="muted">无进行中的预约</div>
-          <div v-for="r in curReserves" :key="r.id" class="list-item">
-            <span class="tag blue">座位{{ r.seatNum }}</span>
-            <span class="grow">{{ new Date(r.startTime).toLocaleString('zh-CN') }} ~ {{ new Date(r.endTime).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}) }} <span class="muted">· {{ r.secondLevelName }}-{{ r.thirdLevelName }}</span> <span class="tag" :class="r.status===1?'green':'orange'">{{ STATUS_TEXT[r.status]||r.status }}</span><span v-if="r.username" class="muted"> · {{ r.username }}</span></span>
-            <button class="btn btn-danger btn-sm" @click="reserveAction(r, 'cancel')" :disabled="r.status===1||r.status===3||r.status===5">取消</button>
-            <button class="btn btn-ghost btn-sm" @click="reserveAction(r, 'signback')" :disabled="!(r.status===1||r.status===3||r.status===5)">退座</button>
+          <div style="margin-top:14px;border-top:1px solid #f0f3f9;padding-top:12px">
+            <h3 style="font-size:14px;margin-bottom:6px">当前预约（{{ scope.mode==='all' ? '全部账号' : currentName }}）</h3>
+            <div v-if="curReserves.length === 0" class="muted">无进行中的预约</div>
+            <div class="scroll-list" v-else>
+              <div v-for="r in curReserves" :key="r.id" class="list-item">
+                <span class="tag blue">座位{{ r.seatNum }}</span>
+                <span class="grow">{{ new Date(r.startTime).toLocaleString('zh-CN') }} ~ {{ new Date(r.endTime).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}) }} <span class="muted">· {{ r.secondLevelName }}-{{ r.thirdLevelName }}</span> <span class="tag" :class="r.status===1?'green':'orange'">{{ STATUS_TEXT[r.status]||r.status }}</span><span v-if="r.username" class="muted"> · {{ r.username }}</span></span>
+                <button class="btn btn-danger btn-sm" @click="reserveAction(r, 'cancel')" :disabled="r.status===1||r.status===3||r.status===5">取消</button>
+                <button class="btn btn-ghost btn-sm" @click="reserveAction(r, 'signback')" :disabled="!(r.status===1||r.status===3||r.status===5)">退座</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- 功能3: 快速预约 -->
-      <div class="card">
+      <div class="card card-scroll">
         <h3><span class="icon" style="background:#e08f1f">3</span> 快速预约</h3>
         <p class="muted" style="margin-bottom:8px">展示{{ scope.mode==='all' ? '全部账号' : currentName }}预约过的桌子，一键续约。</p>
-        <div v-if="nearReserves.length === 0" class="muted">暂无预约记录</div>
-        <div v-for="r in nearReserves.slice(0, 12)" :key="r.id" class="list-item">
-          <span class="tag blue">座位{{ r.seatNum }}</span>
-          <span class="grow">{{ r.secondLevelName }}-{{ r.thirdLevelName }} {{ new Date(r.startTime).toLocaleDateString('zh-CN') }} <span class="tag green">{{ STATUS_TEXT[r.status] || r.status }}</span><span v-if="r.username" class="muted"> · {{ r.username }}</span></span>
-          <button class="btn btn-ghost btn-sm" @click="openQuick(r)">快速预约</button>
+        <div class="card-body">
+          <div v-if="nearReserves.length === 0" class="muted">暂无预约记录</div>
+          <div class="scroll-list" v-else>
+            <div v-for="r in nearReserves.slice(0, 30)" :key="r.id" class="list-item">
+              <span class="tag blue">座位{{ r.seatNum }}</span>
+              <span class="grow">{{ r.secondLevelName }}-{{ r.thirdLevelName }} {{ new Date(r.startTime).toLocaleDateString('zh-CN') }} <span class="tag green">{{ STATUS_TEXT[r.status] || r.status }}</span><span v-if="r.username" class="muted"> · {{ r.username }}</span></span>
+              <button class="btn btn-ghost btn-sm" @click="openQuick(r)">快速预约</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
